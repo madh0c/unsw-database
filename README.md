@@ -86,4 +86,10 @@ Write a Python script to show a student's progression through their
 program/stream, and what they still need to do to complete their
 degree.
 The script takes three command line parameters:
+./prog  StudentID  [ ProgramCode  StreamCode ]
+If no program/stream is given, use the program/stream for the student's most recent enrolment term. The script already checks the validity of the command-line arguments.
+
+The output should look like a transcript, but with additional information to indicate which rule each course satisfies
+
+CourseCode  Term  CourseTitle  Mark  Grade  UOC  NameOfRule
 </p>
