@@ -59,7 +59,7 @@ The MyMyUNSW database includes information that encompasses the
 functionality of NSS, the UNSW Online Handbook, and the CATS
 (room allocation) database.
 The MyMyUNSW data model, schema and database are
-described in a <a href="schema.php">separate document</a>.
+described in a <a href="schema.sql">separate document</a>.
 Note that, [schema](../blob/master/schema.php) is the complete one we developed
 in 2007, the <em>data</em> for this database has been trimmed to the
 absolute minimum to do this assignment; many tables and
