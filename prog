@@ -1,0 +1,300 @@
+#!/usr/bin/python3
+# COMP3311 21T3 Ass2 ... progression check for a given student
+
+import sys
+import psycopg2
+import re
+from helpers import getStudent, getProgram, getStream
+
+# def streamHasRule(task, rule):
+#   cursor=db.cursor()
+#   query = """
+#   select *
+#   from rules
+#     join stream_rules on stream_rules.rule = rules.id
+#   where rules.name = %s
+#   """
+#   cursor.execute(query, [rule])
+#   result1 = cursor.fetchone()
+
+#   query = """
+#   select *
+#   from rules
+#     join program_rules on program_rules.rule = rules.id
+#   where rules.name = %s
+#   """
+#   cursor.execute(query, [rule])
+#   result2 = cursor.fetchone()
+  
+#   if not result1 and not result2:
+#     return False
+#   return True
+
+# define any local helper functions here
+def electiveReqPrefix(reqMin, reqMax, units):
+  front = ""
+  if reqMin == reqMax:
+    front = reqMin - units 
+  elif reqMin is None:
+    front = f"up to {reqMax - units}"
+  elif reqMax is None:
+    front = f"at least {reqMin - units}"
+  elif reqMin < reqMax:
+    front = f"between {reqMin - units} and {reqMax - units}"
+
+  return front
+
+def printReqFromStream(strm, passedCourses, unitsPE):
+  cursor = db.cursor()
+  query = """
+      select rules.name, rules.type, academic_object_groups.definition, rules.min_req, rules.max_req
+      from rules
+        join stream_rules on stream_rules.rule = rules.id
+        join academic_object_groups on rules.ao_group = academic_object_groups.id
+        join streams on stream_rules.stream = streams.id
+      where streams.code = %s
+    """
+  cursor.execute(query, [strm])
+  table = cursor.fetchall()
+  result = []
+
+  for (rule, ruleType, ao, ruleMin, ruleMax) in table:
+    if ruleType == "CC":
+      subjects = ao.split(",")    
+      result.extend(subjects)
+
+  result = [ch for ch in result if "#" not in ch ]
+  removed = []
+  for requiredSub in result:
+    for doneSub in passedCourses:     
+      if doneSub in requiredSub or doneSub == requiredSub:        
+        removed.append(requiredSub)     
+  reqsNeeded = [i for i in result if i not in removed]
+  printSubjects(reqsNeeded)
+  
+  for (rule, ruleType, ao, ruleMin, ruleMax) in table:
+    if ruleType == "PE":
+      return f"{electiveReqPrefix(ruleMin, ruleMax, unitsPE)} UOC courses from {rule}"
+
+def findElectiveRule(code):
+  cursor = db.cursor()
+  query = """
+    select rules.name, academic_object_groups.definition
+    from rules
+      join stream_rules on stream_rules.rule = rules.id
+      join academic_object_groups on academic_object_groups.id = rules.ao_group
+      join streams on stream_rules.stream = streams.id
+    where rules.type = 'PE'
+  """
+  cursor.execute(query)
+  result = cursor.fetchall()
+
+  for (electiveRule, ao) in result:
+    for subject in ao.split(","):
+      subject = subject.replace("#", "")
+      if subject == code or subject in code:
+        return electiveRule
+
+def findRuleTypeFromName(name):
+  cursor = db.cursor()
+  query = """
+    select type
+    from rules
+    where name = %s
+  """
+  cursor.execute(query, [name])
+  result = cursor.fetchone()
+  if not result:
+    return ""
+  return result[0]
+
+def findRuleFromSub(code, stream):
+  cursor = db.cursor()
+  query = """
+    select streams.code, rules.name, academic_object_groups.definition
+    from rules
+      join stream_rules on stream_rules.rule = rules.id
+      join academic_object_groups on academic_object_groups.id = rules.ao_group
+      join streams on stream_rules.stream = streams.id   
+  """
+  cursor.execute(query)
+  result = cursor.fetchall()
+  for (strm, rule, aoGroup) in result:
+    if code in aoGroup and strm == stream:
+      return rule
+  
+def printSubjects(aoGroup):  
+  for subject in aoGroup:
+    if ";" in subject:
+      altSubjects = getAltSubjects(subject)
+      print(f"- {altSubjects[0]} {findSubjectName(altSubjects[0])}")
+      print(f"  or {altSubjects[1]} {findSubjectName(altSubjects[1])}")
+    else:
+      print(f"- {subject} {findSubjectName(subject)}")  
+
+def findSubjectName(code):
+  cursor = db.cursor()
+  query = """
+    select name
+    from subjects
+    where code = %s
+  """
+  cursor.execute(query, [code])
+  result = cursor.fetchone()
+  if result == None:
+    return "???"
+  return result[0]
+  
+def getAltSubjects(codes):
+  codes = codes.replace("{", "")
+  codes = codes.replace("}", "")
+  return codes.split(";")
+
+### set up some globals
+
+usage = f"Usage: {sys.argv[0]} zID [Program Stream]"
+db = None
+
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+zid = sys.argv[1]
+if zid[0] == 'z':
+  zid = zid[1:8]
+digits = re.compile("^\d{7}$")
+if not digits.match(zid):
+  print("Invalid student ID")
+  exit(1)
+
+progCode = None
+strmCode = None
+
+if argc == 4:
+  progCode = sys.argv[2]
+  strmCode = sys.argv[3]
+
+# manipulate database
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  stuInfo = getStudent(db,zid)
+  #print(stuInfo) # debug
+  if not stuInfo:
+    print(f"Invalid student id {zid}")
+    exit()
+
+  if progCode:
+    progInfo = getProgram(db,progCode)
+    if not progInfo:
+      print(f"Invalid program code {progCode}")
+      exit()
+    #print(progInfo)  #debug
+
+  if strmCode:
+    strmInfo = getStream(db,strmCode)
+    if not strmInfo:
+      print(f"Invalid program code {strmCode}")
+      exit()
+    #print(strmInfo)  #debug
+
+  print(f"{zid} {stuInfo[1]}, {stuInfo[2]}")
+  prog = ""
+  if progCode:
+    prog = progInfo[0]
+    print(f"  {progInfo[0]} {progInfo[2]}")
+  strm = ""
+  if strmCode:
+    strm = strmInfo[1]
+    print(f"  {strmInfo[1]} {strmInfo[2]}")
+
+  print("")
+
+  print("Completed:")
+
+  # get trans of completed
+  cursor = db.cursor()
+  query = """
+    select subjects.code, terms.code, subjects.name, course_enrolments.mark, course_enrolments.grade, subjects.uoc 
+    from students 
+      join course_enrolments on course_enrolments.student = students.id 
+      join courses on courses.id = course_enrolments.course 
+      join subjects on subjects.id = courses.subject
+      join terms on terms.id = courses.term
+    where students.id = %s
+    order by courses.term, subjects.code
+  """
+  cursor.execute(query, [zid])
+  
+  result = cursor.fetchall()
+
+  achievedUOC = 0
+
+  passGrades = ["HD","DN","CR","PS"]
+  passGradesMisc = ["A","A+","A-","B","B+","B-","C","C+","C-","D","D+","D-","XE","T","SY","EC","RC","NC"]
+
+  passedCourses = []
+  unitsPE=0
+  unitsGE=0
+  unitsFE=0
+  for (courseCode, termCode, courseName, mark, grade, uoc) in result:    
+    if grade in passGrades or grade in passGradesMisc:    
+      if not mark:    
+        mark = '-'
+      passedCourses.append(courseCode)
+      achievedUOC += uoc
+      
+      rule = findRuleFromSub(courseCode, strm)
+      if not rule:
+        rule = findElectiveRule(courseCode)
+        unitsPE += uoc
+      if not rule:
+        unitsFE -= uoc
+        unitsFE += uoc
+        rule = "Free Electives"
+
+      print(f"{courseCode} {termCode} {courseName:<32s}{mark:>3} {grade:2s}   {uoc}uoc towards {rule}")
+    else:
+      print(f"{courseCode} {termCode} {courseName:<32s}{mark:>3} {grade:2s}   fail does not count")
+
+  print(f"UOC = {achievedUOC} so far\n")
+
+  #print(passedCourses)
+
+  print("Remaining to complete degree:")
+  query = """
+      select rules.name, rules.type, rules.min_req, rules.max_req, academic_object_groups.definition
+      from rules
+        join program_rules on program_rules.rule = rules.id
+        join academic_object_groups on rules.ao_group = academic_object_groups.id
+      where program_rules.program = %s
+    """
+  cursor.execute(query, [prog])
+  rules = cursor.fetchall()
+
+  for (rule, ruleType, ruleMin, ruleMax, ao) in rules:
+    if ruleType == "DS":
+      prescribed = printReqFromStream(strm, passedCourses, unitsPE)
+    elif ruleType == "CC":
+      printSubjects(ao.split(","))
+    elif ruleType == "GE":
+      print(prescribed)
+      print(f"{ruleMin - unitsGE} UOC of General Education")
+    elif ruleType == "FE":
+      print(f"{electiveReqPrefix(ruleMin, ruleMax, unitsFE)} UOC courses of Free Elective")
+  
+
+  # if have a program/stream
+  #   show progression check on supplied program/stream
+  # else
+  #   show progression check on most recent program/stream enrolment
+  # ... add your code here ...
+
+except Exception as err:
+  print("DB error: ", err)
+finally:
+  if db:
+    db.close()
+

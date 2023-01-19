@@ -1,0 +1,91 @@
+#!/usr/bin/python3
+# COMP3311 21T3 Ass2 ... print a transcript for a given student
+
+import sys
+import psycopg2
+import re
+from helpers import getStudent
+
+# define any local helper functions here
+
+### set up some globals
+
+usage = f"Usage: {sys.argv[0]} zID"
+db = None
+
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+zid = sys.argv[1]
+if zid[0] == 'z':
+  zid = zid[1:8]
+digits = re.compile("^\d{7}$")
+if not digits.match(zid):
+  print(f"Invalid student ID {zid}")
+  exit(1)
+
+# manipulate database
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  stuInfo = getStudent(db,zid)
+  if not stuInfo:
+    print(f"Invalid student ID {zid}")
+    exit()
+
+  print(f"{zid} {stuInfo[1]}, {stuInfo[2]}")
+
+  cursor = db.cursor()
+  query = """
+    select subjects.code, terms.code, subjects.name, course_enrolments.mark, course_enrolments.grade, subjects.uoc 
+    from students 
+      join course_enrolments on course_enrolments.student = students.id 
+      join courses on courses.id = course_enrolments.course 
+      join subjects on subjects.id = courses.subject
+      join terms on terms.id = courses.term
+    where students.id = %s 
+    order by courses.term, subjects.code
+  """
+  cursor.execute(query, [zid])
+  
+  result = cursor.fetchall()
+  UOCforWam = 0
+  achievedUOC = 0
+  weightedMarkSum = 0
+
+  passGrades = ["HD","DN","CR","PS"]
+  passGradesMisc = ["A","A+","A-","B","B+","B-","C","C+","C-","D","D+","D-","XE","T","SY","EC","RC","NC"]
+  failGrades =  ["AF","FL","UF","E","F"]
+  miscGrades = ["AS","AW","PW","NA","RD","NF","LE","PE","WD","WJ"]
+
+  for (courseCode, termCode, courseName, mark, grade, uoc) in result:    
+    if mark is None:    
+      mark = '-'
+    else:
+      weightedMarkSum += mark * uoc
+    
+    if grade in passGrades or grade in failGrades:
+        UOCforWam += uoc
+
+    subjectInfo = f"{courseCode} {termCode} {courseName:<32s}{mark:>3} {grade:2s}"    
+
+    if grade in passGrades or grade in passGradesMisc:
+      subjectInfo += f"  {uoc:2d}uoc"
+      achievedUOC += uoc
+    elif grade in failGrades:
+      subjectInfo += "   fail"
+    
+    print(subjectInfo)
+    
+  print(f"UOC = {achievedUOC}, WAM = {round(weightedMarkSum / UOCforWam, 1)}")
+  
+
+except Exception as err:
+  print("DB error: ", err)
+finally:
+  if db:
+    db.close()
+

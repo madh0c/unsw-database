@@ -1,0 +1,186 @@
+#!/usr/bin/python3
+# COMP3311 21T3 Ass2 ... print list of rules for a program or stream
+
+import sys
+import psycopg2
+import re
+from helpers import getProgram, getStream
+
+# define any local helper functions here
+def electiveReqPrefix(reqMin, reqMax):
+  front = ""
+  if reqMin == reqMax:
+    front = reqMin 
+  elif reqMin is None:
+    front = f"up to {reqMax}"
+  elif reqMax is None:
+    front = f"at least {reqMin}"
+  elif reqMin < reqMax:
+    front = f"between {reqMin} and {reqMax}"
+
+  return front
+  
+
+def printSubjects(aoGroup):  
+  if "#" in aoGroup:
+    print(f"- courses matching {aoGroup}")
+    return
+  for subject in aoGroup.split(","):
+    if ";" in subject:
+      altSubjects = getAltSubjects(subject)
+      print(f"- {altSubjects[0]} {findSubjectName(altSubjects[0])}")
+      print(f"  or {altSubjects[1]} {findSubjectName(altSubjects[1])}")
+    else:
+      print(f"- {subject} {findSubjectName(subject)}")  
+
+def findStreamName(code):
+  cursor = db.cursor()
+  query = """
+    select name
+    from streams
+    where code = %s
+  """
+  cursor.execute(query, [code])
+  result = cursor.fetchone()
+  if result == None:
+    return "???"
+  return result[0]
+
+def findSubjectName(code):
+  cursor = db.cursor()
+  query = """
+    select name
+    from subjects
+    where code = %s
+  """
+  cursor.execute(query, [code])
+  result = cursor.fetchone()
+  if result == None:
+    return "???"
+  return result[0]
+  
+def getAltSubjects(codes):
+  codes = codes.replace("{", "")
+  codes = codes.replace("}", "")
+  return codes.split(";")
+### set up some globals
+
+usage = f"Usage: {sys.argv[0]} (ProgramCode|StreamCode)"
+db = None
+
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+code = sys.argv[1]
+if len(code) == 4:
+  codeOf = "program"
+elif len(code) == 6:
+  codeOf = "stream"
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  if codeOf == "program":
+    progInfo = getProgram(db,code)
+    if not progInfo:
+      print(f"Invalid program code {code}")
+      exit()
+    #print(progInfo)  #debug
+    print(f"{progInfo[0]} {progInfo[2]}, {progInfo[3]} UOC, {progInfo[6] / 12} years")
+
+    # find the corresponding offeredBy
+    cursor = db.cursor()
+    query = """
+      select orgunits.longname
+      from programs
+        join orgunits on programs.offeredby = orgunits.id
+      where programs.code = %s
+    """
+    cursor.execute(query, [code])
+    offeringFaculty = cursor.fetchone()
+    print(f"- offered by {offeringFaculty[0]}")
+
+    #requirements
+    print("Academic Requirements:")
+    
+    query = """
+      select rules.name, rules.type, rules.min_req, academic_object_groups.definition
+      from rules
+        join program_rules on program_rules.rule = rules.id
+        join academic_object_groups on rules.ao_group = academic_object_groups.id
+      where program_rules.program = %s
+    """
+    cursor.execute(query, [code])
+    rules = cursor.fetchall()
+
+    #print(rules) #debug
+    for (req, reqType, reqMin, aoGroup) in rules:
+      if reqType == "CC":
+        if len(aoGroup.split(",")) <= 1:
+          print(req)
+        else:  
+          print(f"all courses from {req}")
+        printSubjects(aoGroup)
+      elif reqType == "GE":
+        print(f"{reqMin} UOC of General Education")
+      else:
+        print(f"{reqMin} stream(s) from {req}")
+        if reqType == "DS":
+          for stream in aoGroup.split(","):
+            print(f"- {stream} {findStreamName(stream)}")
+
+  elif codeOf == "stream":
+    strmInfo = getStream(db,code)
+    if not strmInfo:
+      print(f"Invalid stream code {code}")
+      exit()
+    #print(strmInfo)  #debug
+    # List the rules for Stream
+    print(f"{strmInfo[1]} {strmInfo[2]}")
+
+    # find the corresponding offeredBy
+    cursor = db.cursor()
+    query = """
+      select orgunits.longname
+      from streams
+        join orgunits on streams.offeredby = orgunits.id
+      where streams.code = %s
+    """
+    cursor.execute(query, [code])
+    offeringFaculty = cursor.fetchone()
+    print(f"- offered by {offeringFaculty[0]}")
+
+    #requirements
+    print("Academic Requirements:")
+    
+    query = """
+      select rules.name, rules.type, rules.min_req, rules.max_req, academic_object_groups.definition
+      from rules
+        join stream_rules on stream_rules.rule = rules.id
+        join academic_object_groups on rules.ao_group = academic_object_groups.id
+        join streams on stream_rules.stream = streams.id
+      where streams.code = %s
+    """
+    cursor.execute(query, [code])
+    rules = cursor.fetchall()
+    for (req, reqType, reqMin, reqMax, aoGroup) in rules:
+      if reqType == "CC":
+        if len(aoGroup.split(",")) <= 1:
+          print(req)
+        else:  
+          print(f"all courses from {req}")
+        printSubjects(aoGroup)
+      elif reqType == "PE":        
+        print(f"{electiveReqPrefix(reqMin, reqMax)} UOC courses from {req}")
+        printSubjects(aoGroup)
+      elif reqType == "FE":
+        print(f"{electiveReqPrefix(reqMin, reqMax)} UOC of Free Electives")
+
+
+except Exception as err:
+  print(err)
+finally:
+  if db:
+    db.close()
